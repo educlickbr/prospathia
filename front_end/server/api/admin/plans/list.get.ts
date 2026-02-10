@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
 
     const { data, error } = await client.rpc("nxt_get_planos", {
         p_produto_id: produto_id,
-    });
+    } as any);
 
     if (error) {
         throw createError({

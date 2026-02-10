@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
 
     const { data, error } = await client.rpc("nxt_delete_plano", {
         p_id: body.id,
-    });
+    } as any);
 
     if (error) {
         throw createError({

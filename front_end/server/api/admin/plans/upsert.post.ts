@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
         p_intervalo: body.intervalo || "month",
         p_stripe_price_id: body.stripe_price_id || null,
         p_stripe_product_id: body.stripe_product_id || null,
-    });
+    } as any);
 
     if (error) {
         throw createError({
