@@ -1,0 +1,22 @@
+[
+  {
+    "id": "a1229ff7-4c3f-4b12-8271-81e752684117",
+    "nome_role": "admin"
+  },
+  {
+    "id": "67ed3bd7-72ef-4d92-b43b-78250874be1e",
+    "nome_role": "cliente"
+  },
+  {
+    "id": "7f33da80-6bd8-48af-869e-eba4a0878666",
+    "nome_role": "paciente"
+  },
+  {
+    "id": "a5a1ac8a-9ffd-4e4d-8a5f-ea62d5f722e2",
+    "nome_role": "colaborador"
+  },
+  {
+    "id": "2f5bfeb9-e9ff-4335-9e74-33c2f3d25f0d",
+    "nome_role": "clinica"
+  }
+]

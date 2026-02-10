@@ -10,7 +10,10 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.978.0",
+    "@types/uuid": "^10.0.0",
     "nuxt": "^4.2.2",
+    "uuid": "^13.0.0",
     "vue": "^3.5.26",
     "vue-router": "^4.6.4"
   },

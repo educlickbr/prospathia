@@ -7,6 +7,8 @@ export default defineNuxtConfig({
   ],
 
   // 2. Configuração do Supabase (Segurança JWT)
+  css: ["./app/assets/css/style.css"],
+
   supabase: {
     redirectOptions: {
       login: "/login", // Onde mandar o usuário se não estiver logado

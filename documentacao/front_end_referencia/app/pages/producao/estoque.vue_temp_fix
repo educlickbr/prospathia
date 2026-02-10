@@ -1,0 +1,24 @@
+const confirmDeleteKit = async () => {
+    isDeleting.value = true;
+    try {
+        await estoqueStore.deletarKit(itemToDelete.value.id);
+        showToast('Kit excluído com sucesso!', { type: 'success' });
+        fetchKits();
+        showDeleteConfirm.value = false;
+        itemToDelete.value = null;
+    } catch (e: any) {
+        showToast('Erro ao excluir kit: ' + e.message, { type: 'error' });
+    } finally {
+        isDeleting.value = false;
+    }
+};
+
+const confirmDelete = async () => {
+    if (!itemToDelete.value) return;
+
+    if (itemToDelete.value.type === 'produto') {
+        await confirmDeleteProduct();
+    } else {
+        await confirmDeleteKit();
+    }
+};

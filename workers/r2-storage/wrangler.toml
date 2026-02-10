@@ -1,0 +1,12 @@
+name = "prospathia-r2-storage"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Bind R2 Bucket
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "prospathia" # ATENÇÃO: Substitua pelo nome real do seu bucket no R2
+
+# Variables
+[vars]
+# AUTH_SECRET = "configure-no-dashboard-ou-no-secrets" -- isso é apenas um lembrete de processo nào deixe a senha aqui

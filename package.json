@@ -2,8 +2,7 @@
   "devDependencies": {
     "supabase": "^2.72.8"
   },
-
   "overrides": {
-  "tar": "^7.4.3"
-}
+    "tar": "^7.4.3"
+  }
 }
