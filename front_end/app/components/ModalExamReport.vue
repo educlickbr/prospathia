@@ -8,6 +8,18 @@ const props = defineProps<{
 
 const emit = defineEmits(['close']);
 
+// Hover zoom state
+const hoveredItem = ref<any>(null);
+
+// Ref to the white document container to calculate its center
+const documentRef = ref<HTMLElement | null>(null);
+
+const hoverCardLeft = computed(() => {
+    if (!documentRef.value) return '50vw';
+    const rect = documentRef.value.getBoundingClientRect();
+    return `${rect.left + rect.width / 2}px`;
+});
+
 // Mock clinic data for now (or pass as props in future)
 const clinicName = "Clínica Otolithics";
 const clinicLogo = "https://otolithics-p.b-cdn.net/logo_otolithics.png"; // Placeholder or from user's ref if valid
@@ -322,9 +334,9 @@ const handlePrint = () => {
                         </button>
                     </div>
 
-                <!-- Modal Content / Scaled Page -->
-                <!-- We apply dynamic dimensions here. overflow-hidden ensures no scrollbars inside the card -->
+                <!-- Modal Document Wrapper -->
                 <div 
+                    ref="documentRef"
                     class="bg-white text-black relative shadow-2xl overflow-hidden print:w-full print:h-full print:shadow-none print:transform-none flex-shrink-0"
                     :style="containerStyle"
                 >
@@ -357,7 +369,7 @@ const handlePrint = () => {
                             <!-- Coluna Esquerda -->
                             <div class="col-esquerda flex flex-col justify-between pt-[3.5em]">
                                 <template v-for="item in [reportData.rows?.[0]?.[0], reportData.rows?.[1]?.[0], reportData.rows?.[2]?.[0]].filter(Boolean)" :key="item?.key || Math.random()">
-                                    <div v-if="item" class="sub-item w-full flex flex-col items-center relative mb-[1.5em]">
+                                    <div v-if="item" class="sub-item w-full flex flex-col items-center relative mb-[1.5em] cursor-pointer rounded-md transition-all hover:ring-1 hover:ring-primary/20 hover:bg-primary/5" @mouseenter="hoveredItem = item" @mouseleave="hoveredItem = null">
                                         <div class="titulo-condicao text-[0.8em] font-semibold mb-[0.25em] text-[#333]">{{ item.label }}</div>
                                         <div class="aspect-box w-full bg-contain bg-no-repeat bg-center relative" :class="`aspect-box-${item.type}`" style="aspect-ratio: 16/9;">
                                             <div class="linha-angulo absolute bottom-[15%] left-1/2 origin-bottom h-[60%] w-[1px] bg-[#FF7900]" :style="{ transform: `translateX(-50%) rotate(${item.lin1}deg)` }"></div>
@@ -382,7 +394,7 @@ const handlePrint = () => {
                             <!-- Coluna Central -->
                             <div class="col-central flex flex-col items-start justify-start">
                                 <template v-for="item in [reportData.rows?.[0]?.[1]].filter(Boolean)" :key="item?.key || Math.random()">
-                                    <div v-if="item" class="sub-item w-full flex flex-col items-center relative mb-[1.5em]">
+                                    <div v-if="item" class="sub-item w-full flex flex-col items-center relative mb-[1.5em] cursor-pointer rounded-md transition-all hover:ring-1 hover:ring-primary/20 hover:bg-primary/5" @mouseenter="hoveredItem = item" @mouseleave="hoveredItem = null">
                                         <div class="titulo-condicao text-[0.8em] font-semibold mb-[0.25em] text-[#333]">{{ item.label }}</div>
                                         <div class="aspect-box w-full bg-contain bg-no-repeat bg-center relative" :class="`aspect-box-${item.type}`" style="aspect-ratio: 16/9;">
                                             <div class="linha-angulo absolute bottom-[15%] left-1/2 origin-bottom h-[60%] w-[1px] bg-[#FF7900]" :style="{ transform: `translateX(-50%) rotate(${item.lin1}deg)` }"></div>
@@ -407,7 +419,7 @@ const handlePrint = () => {
                             <!-- Coluna Direita -->
                             <div class="col-direita flex flex-col justify-between pt-[3.5em]">
                                 <template v-for="item in [reportData.rows?.[0]?.[2], reportData.rows?.[1]?.[1], reportData.rows?.[2]?.[1]].filter(Boolean)" :key="item?.key || Math.random()">
-                                    <div v-if="item" class="sub-item w-full flex flex-col items-center relative mb-[1.5em]">
+                                    <div v-if="item" class="sub-item w-full flex flex-col items-center relative mb-[1.5em] cursor-pointer rounded-md transition-all hover:ring-1 hover:ring-primary/20 hover:bg-primary/5" @mouseenter="hoveredItem = item" @mouseleave="hoveredItem = null">
                                         <div class="titulo-condicao text-[0.8em] font-semibold mb-[0.25em] text-[#333]">{{ item.label }}</div>
                                         <div class="aspect-box w-full bg-contain bg-no-repeat bg-center relative" :class="`aspect-box-${item.type}`" style="aspect-ratio: 16/9;">
                                             <div class="linha-angulo absolute bottom-[15%] left-1/2 origin-bottom h-[60%] w-[1px] bg-[#FF7900]" :style="{ transform: `translateX(-50%) rotate(${item.lin1}deg)` }"></div>
@@ -446,6 +458,44 @@ const handlePrint = () => {
             </div> <!-- End centering div -->
         </div> <!-- End Overlay -->
     </Teleport>
+
+    <!-- Hover Zoom Overlay (separate Teleport so it's always on top) -->
+    <Teleport to="body">
+        <Transition name="zoom-card">
+            <div 
+                v-if="hoveredItem"
+                class="bg-white rounded-xl shadow-2xl border border-secondary/10 p-8 flex flex-col items-center gap-6 pointer-events-none print:hidden"
+                :style="{ position: 'fixed', zIndex: 99999, left: hoverCardLeft, top: '50%', transform: 'translate(-50%, -50%)', width: 'calc(90vh * 0.70707 - 32px)', maxWidth: '700px' }"
+                >
+                    <!-- Title -->
+                    <h3 class="text-base font-bold text-gray-800 text-center">{{ hoveredItem.label }}</h3>
+
+                    <!-- Chart image + lines -->
+                    <div 
+                        class="w-full bg-contain bg-no-repeat bg-center relative"
+                        :class="`aspect-box-${hoveredItem.type}`"
+                        style="aspect-ratio: 16/9; width: 100%;"
+                    >
+                        <div class="linha-angulo absolute bottom-[15%] left-1/2 origin-bottom h-[60%] w-[2px] bg-[#FF7900]" :style="{ transform: `translateX(-50%) rotate(${hoveredItem.lin1}deg)` }"></div>
+                        <div class="linha-angulo-azul absolute bottom-[15%] left-1/2 origin-bottom h-[60%] w-[2px] bg-[#707070]" :style="{ transform: `translateX(-50%) rotate(${hoveredItem.lin2}deg)` }"></div>
+                    </div>
+
+                    <!-- Measurements -->
+                    <div class="flex flex-col items-center gap-1 text-sm">
+                        <div class="flex gap-3 text-gray-600">
+                            <span>M1: <strong>{{ hoveredItem.m1 }}</strong></span>
+                            <span>M2: <strong>{{ hoveredItem.m2 }}</strong></span>
+                            <span>M3: <strong>{{ hoveredItem.m3 }}</strong></span>
+                            <span>M4: <strong>{{ hoveredItem.m4 }}</strong></span>
+                        </div>
+                        <div class="flex gap-6 text-sm font-bold mt-1">
+                            <span class="text-[#FF7900]">MD: {{ hoveredItem.md }}</span>
+                            <span class="text-[#707070]">MND: {{ hoveredItem.mnd }}</span>
+                        </div>
+                    </div>
+                </div>
+        </Transition>
+    </Teleport>
 </template>
 
 <style scoped>
@@ -463,6 +513,22 @@ const handlePrint = () => {
 .aspect-box-normal { background-image: url('https://otolithics-p.b-cdn.net/transferidor_cabeca_normal.png'); }
 .aspect-box-direita { background-image: url('https://otolithics-p.b-cdn.net/transferidor_cabeca_direita.png'); }
 .aspect-box-esquerda { background-image: url('https://otolithics-p.b-cdn.net/transferidor_cabeca_esquerda.png'); }
+
+/* Hover zoom card transition */
+.zoom-card-enter-active,
+.zoom-card-leave-active {
+    transition: opacity 0.35s ease-out, transform 0.35s ease-out;
+}
+.zoom-card-enter-from,
+.zoom-card-leave-to {
+    opacity: 0;
+    transform: scale(0.93) translateY(8px);
+}
+.zoom-card-enter-to,
+.zoom-card-leave-from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+}
 
 @media print {
     @page {
