@@ -24,7 +24,7 @@ const isActive = (path: string) => {
 const handleNavigation = (path: string) => {
   if (!path) return
   router.push(path)
-  // emit("close") // Only if we want to close it (if it was a modal)
+  emit("close")
 }
 
 // User Info Helpers

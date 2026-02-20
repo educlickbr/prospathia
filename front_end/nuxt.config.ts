@@ -13,7 +13,7 @@ export default defineNuxtConfig({
     redirectOptions: {
       login: "/login", // Onde mandar o usuário se não estiver logado
       callback: "/confirm", // Para onde o Supabase volta após login social
-      exclude: ["/"], // Páginas públicas (ex: Landing Page)
+      exclude: ["/", "/teste-realtime"], // Páginas públicas (ex: Landing Page)
     },
   },
 

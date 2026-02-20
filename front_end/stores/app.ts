@@ -89,18 +89,11 @@ export const useAppStore = defineStore("app", {
             // First ensure product is loaded
             await this.initProduct();
 
-            const supabase = useSupabaseClient();
-
             try {
-                // Call new RPC with product ID
-                const { data, error } = await supabase.rpc(
-                    "nxt_credenciais_user_front",
-                    {
-                        p_produto_id: this.produto?.id || null,
-                    } as any,
-                ) as { data: any; error: any };
-
-                if (error) throw error;
+                // Call BFF Endpoint instead of direct RPC
+                const data = await $fetch('/api/auth/session', {
+                    params: { product_id: this.produto?.id }
+                }) as any;
 
                 if (data) {
                     // Map RPC response to store state
@@ -122,29 +115,30 @@ export const useAppStore = defineStore("app", {
                     }
 
                     // roles
-                    // For now, take the first role or map correctly.
-                    // Current store expects a single 'role' object.
-                    // New RPC returns 'roles' array.
                     if (data.roles && data.roles.length > 0) {
                         // Logic to pick active role? Or just taking first for now.
                         const firstRole = data.roles[0];
                         this.role = {
                             papel_id: firstRole.role_id,
                             nome: firstRole.nome_role,
-                            // Add clinica_id if store supports it
                         };
+
+                        // Extract Clinica ID from role if available
+                        if (firstRole.clinica_id) {
+                            this.company = {
+                                id: firstRole.clinica_id,
+                                // Add other clinic details if available or needed
+                            };
+                        }
                     }
 
-                    // Clinica
-                    // this.company = data.clinicas; // Map if structure matches
+                    // Clinica (Fallback if provided directly)
+                     if (data.clinicas) {
+                        this.company = data.clinicas; 
+                     }
                 }
             } catch (err) {
-                console.warn("RPC nxt_credenciais_user_front falhou:", err);
-                // Fallback to old method if needed? Or just fail.
-
-                // LEGACY FALLBACK (Keep old logic temporarily or remove?)
-                // Assuming we want to switch completely.
-                // If RPC fails, maybe user is not logged in properly or migration not applied.
+                console.warn("BFF /api/auth/session falhou:", err);
             }
 
             this.initialized = true;
