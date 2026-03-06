@@ -67,7 +67,7 @@ const handleLogin = async () => {
 
             <form @submit.prevent="handleLogin" class="space-y-6">
                 
-                <!-- Email Field -->
+                <!-- Campo Email -->
                 <div class="space-y-2">
                     <label for="email" class="text-[10px] font-black uppercase tracking-widest text-secondary/60 ml-1">E-mail</label>
                     <div class="relative group">

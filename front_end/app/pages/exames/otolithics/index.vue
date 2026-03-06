@@ -3,6 +3,9 @@ import { ref, onMounted } from 'vue';
 import { useAppStore } from '../../../../stores/app';
 import ModalPaciente from '~/components/ModalPaciente.vue';
 import ModalExamReport from '~/components/ModalExamReport.vue';
+import ModalNovoExame from '~/components/ModalNovoExame.vue';
+import { useSupabaseUser } from '#imports';
+import { useVVSExam } from '~/composables/useVVSExam';
 
 definePageMeta({
   layout: 'base',
@@ -43,6 +46,12 @@ const pagination = ref({
 
 const isModalOpen = ref(false);
 const currentPatient = ref<Patient | null>(null);
+
+// Novo Exame Modal State
+const isNovoExameOpen = ref(false);
+const selectedPatientExame = ref<Patient | null>(null);
+const currentUser = useSupabaseUser();
+const { startPareamento } = useVVSExam();
 
 // Exams Expansion State
 const expandedPatientId = ref<string | null>(null);
@@ -164,8 +173,14 @@ const toggleExams = async (patientId: string) => {
     }
 };
 
-const performExam = (id: string) => {
+const performExam = async (id: string) => {
     console.log('Realizar exame:', id);
+    selectedPatientExame.value = patients.value.find(p => p.id === id) || null;
+    isNovoExameOpen.value = true;
+    
+    // Explicit Launch instead of a Watcher
+    console.log('[INDEX_DEBUG] Injetando pareamento no root view. Context UID:', currentUser.value?.id);
+    await startPareamento(currentUser.value?.id);
 };
 
 const viewExam = async (examId: string) => {
@@ -391,6 +406,12 @@ const onModalSave = () => {
             :is-open="isReportOpen"
             :exam="currentExamReport"
             @close="isReportOpen = false"
+        />
+
+        <ModalNovoExame 
+            :is-open="isNovoExameOpen"
+            :patient="selectedPatientExame"
+            @close="isNovoExameOpen = false"
         />
     </div>
 </template>
