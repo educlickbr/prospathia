@@ -4,11 +4,14 @@ import { ref, watch, onUnmounted } from 'vue';
 const isConnectedToChannels = ref(false);
 const pareamentoStatus = ref<'aguardando_pareamento' | 'pareado'>('aguardando_pareamento');
 // Estado de navegação do Modal
-const controleTela = ref<'parear' | 'boasvindas' | 'foco' | 'sobreposicao' | 'aguardando' | 'exame' | 'fim'>('parear');
+const controleTela = ref<'parear' | 'boasvindas' | 'foco' | 'sobreposicao' | 'aguardando' | 'exame' | 'fim' | 'salvo'>('parear');
 const logs = ref<any[]>([]);
 
 // Condições de calibração do exame (buscadas do banco)
 const condicoesExame = ref<any[]>([]);
+
+// Dados em tempo real dos ângulos (giroscópio)
+const lastAngleData = ref({ line: 180, head: 180 });
 
 // Variáveis internas para os canais e polling
 const channels = ref<Record<string, any>>({});
@@ -116,12 +119,14 @@ export const useVVSExam = () => {
             console.error('Erro ao modificar o controle_pareamento (BFF):', e);
             logMessage('Erro', { text: 'Falha ao registrar início do exame no banco.' });
         }
+
+        // Canais de Tracking da Cabeça serão criados apenas na hora da Medição
     };
 
     /**
      * Envia um evento de mudança de tela para o mobile.
      */
-    const enviarTela = async (fallbackUid: string | undefined, tela: 'boasvindas' | 'foco' | 'examenormal' | 'sobreposicao' | 'aguardando' | 'parear') => {
+    const enviarTela = async (fallbackUid: string | undefined, tela: string) => {
         let uid = fallbackUid || activeUid.value || currentUser.value?.id;
         if (!uid) {
             const { data } = await supabase.auth.getUser();
@@ -242,6 +247,102 @@ export const useVVSExam = () => {
     };
 
     /**
+     * Inicia as subscrições para a captura de medidas em Tempo Real
+     */
+    const iniciarTrackingVR = (anguloInicial: number) => {
+        const uid = activeUid.value || currentUser.value?.id;
+        if (!uid) return;
+
+        logMessage('System', { text: `[VR] Modo de medição ativado. Enviando ângulo base: ${anguloInicial}º` });
+
+        const anguloChannelName = `${uid}-angulo`;
+        const dispositivoChannelName = `${uid}-dispositivo`;
+
+        // 1. Prepara Canal de Ângulo (Seta) para enviar as correções/início
+        if (!channels.value[anguloChannelName]) {
+            channels.value[anguloChannelName] = supabase.channel(anguloChannelName);
+        }
+        
+        // Emite o ângulo inicial pro Mobile deitar a seta
+        channels.value[anguloChannelName].subscribe((status: string) => {
+            if (status === 'SUBSCRIBED') {
+                channels.value[anguloChannelName].send({
+                    type: 'broadcast',
+                    event: 'angulo',
+                    payload: { valor: anguloInicial }
+                });
+            }
+        });
+
+        // 2. Prepara e Assina o Canal de Dispositivo (Giroscópio da Cabeça vindo do Celular)
+        if (!channels.value[dispositivoChannelName]) {
+            channels.value[dispositivoChannelName] = supabase.channel(dispositivoChannelName);
+        }
+
+        channels.value[dispositivoChannelName]
+            .on('broadcast', { event: 'angulodispositivo' }, (payload: any) => {
+                console.log(`[VVS_DEBUG] RX (angulodispositivo):`, payload);
+                
+                // Baseado nos logs de Rede do app legado do usuário, o objeto chega limpo:
+                // {event: 'angulodispositivo', type: 'broadcast', valor: -7.7729}
+                // Opcionalmente podemos suportar o wrapper do payload.payload caso a web SDK encapsule
+                const valorCru = payload.valor ?? payload.payload?.valor ?? payload.data?.valor;
+                
+                if (valorCru !== undefined && valorCru !== null) {
+                    const giroDegrees = parseFloat(valorCru);
+                    // Os logs mostraram que o valor JÁ VEM EM GRAUS (ex: 15.98, -36.04)
+                    // Então pulamos a conversão de Radianos.
+                    
+                    // Como a variável head local é base 180 visualmente no transferidor do front:
+                    lastAngleData.value.head = 180 + giroDegrees;
+                }
+            })
+            .subscribe((status: string) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log(`[VVS_DEBUG] Dispositivo Channel conectado. Escutando giroscópio...`);
+                }
+            });
+    };
+
+    /**
+     * Envia pequenos ajustes da seta (teclado) diretamente para o Mobile
+     */
+    const ajustarAnguloVR = (novoValor: number) => {
+        const uid = activeUid.value || currentUser.value?.id;
+        if (!uid) return;
+        const angChannel = channels.value[`${uid}-angulo`];
+        if (angChannel) {
+            angChannel.send({
+                type: 'broadcast',
+                event: 'angulo',
+                payload: { valor: novoValor }
+            });
+        }
+    };
+
+    /**
+     * Para as transmissões pesadas do tracking de giroscópio e envios de seta,
+     * economizando CPU e banda entre medidas
+     */
+    const pararTrackingVR = async () => {
+        const uid = activeUid.value || currentUser.value?.id;
+        if (!uid) return;
+
+        console.log('[VVS_DEBUG] Medição pausada, limpando canais de tracking para economizar processamento...');
+        const angChannel = channels.value[`${uid}-angulo`];
+        const dispChannel = channels.value[`${uid}-dispositivo`];
+
+        if (angChannel) {
+            await angChannel.unsubscribe();
+            delete channels.value[`${uid}-angulo`];
+        }
+        if (dispChannel) {
+            await dispChannel.unsubscribe();
+            delete channels.value[`${uid}-dispositivo`];
+        }
+    };
+
+    /**
      * Limpa os canais e sinaliza o cancelamento do exame.
      */
     const cleanup = async (fallbackUid?: string) => {
@@ -328,10 +429,15 @@ export const useVVSExam = () => {
         logs,
         controleRemotoCancelar,
         condicoesExame,
+        lastAngleData,
         startPareamento,
         enviarTela,
         avancarParaBoasVindas,
+        iniciarTrackingVR,
+        ajustarAnguloVR,
+        pararTrackingVR,
         fetchCondicoes,
-        cleanup
+        cleanup,
+        logMessage
     };
 };

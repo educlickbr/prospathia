@@ -1,203 +1,89 @@
-# Exame de Vertical Visual Subjetiva (VVS) — Documentação Técnica
+# Implementação do Exame VVS (Otolithics) - Estado Atual
 
-> **Status**: Em desenvolvimento (Nuxt) — App mobile operacional (FlutterFlow)  
-> **Última atualização**: 2026-02-27
+Este documento detalha tudo o que já foi implementado e estruturado para o fluxo do Exame VVS no sistema web (Painel).
 
----
+## 1. Visão Geral da Arquitetura
 
-## 1. O Que É Este Exame
+A arquitetura do exame VVS segue fortemente o padrão **Thick Database** e uma comunicação **Híbrida de Tempo Real**:
 
-O **VVS (Vertical Visual Subjetiva)** avalia como o cérebro do paciente percebe o eixo vertical da gravidade. É um exame fundamental para diagnóstico de problemas de equilíbrio e disfunções vestibulares.
+- **Thick Database (BFF + RPCs)**: Nenhuma consulta direta ao banco de dados pelo frontend. O cliente web se comunica com endpoints na camada BFF (Nitro/Nuxt Server), que por sua vez invocam `RPCs` seguras e blindadas no Supabase usando a chave de serviço (`serverSupabaseClient`).
+- **Realtime (WebSockets)**: Utilizado estritamente para comandos de tela bidirecionais entre painel web e celular/óculos VR (via canais de `Presence`/`Broadcast` como `uid-tela` e `uid-angulo`).
 
-**Na prática:**
+## 2. Componente Visual e Interface (`ModalNovoExame.vue`)
 
-- O paciente usa uma máscara VR com o celular acoplado
-- O celular captura a orientação da cabeça via giroscópio/acelerômetro
-- O paciente tenta alinhar uma linha virtual ao que julga ser o "vertical absoluto"
-- O avaliador controla e monitora o exame pelo desktop (Nuxt)
+O modal de exame gerencia as etapas sequenciais (state-machine) do exame VVS, disparando eventos para o dispositivo VR e adaptando a interface no Desktop.
 
----
+**Fases já implementadas:**
 
-## 2. Arquitetura do Sistema
+1. **`parear`**: Instruções para conectar o dispositivo móvel com a conta ativa. O pareamento agora acontece via _short-polling_ (BFF), o que eliminou comportamentos não-determinísticos de WebSockets em background.
+2. **`boasvindas`**: Instruções para acomodar a máscara do VR.
+3. **`foco`**: Ajuste de foco das lentes (envia payload `{"nome": "foco"}` pro VR).
+4. **`sobreposicao`**: Calibração com esferas azul/vermelha -> roxa (envia payload `{"nome": "sobreposicao"}`).
+5. **`aguardando`**: Tela de pré-setup antes do início das baterias de medições reais.
 
-O sistema é dividido em dois agentes que se comunicam em tempo real:
+**Recursos Visuais da Tela `aguardando`**:
+Na tela de espera, montamos um dashboard responsivo e detalhado que espelha os dados em tempo real:
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                     SUPABASE REALTIME                          │
-│                   (ponte de comunicação)                       │
-└──────────────────────┬─────────────────────┬───────────────────┘
-                       │                     │
-          ┌────────────▼──────┐   ┌──────────▼────────────┐
-          │  DESKTOP (Nuxt)   │   │  MOBILE (Flutter)     │
-          │                   │   │                       │
-          │ - Controla o exame│   │ - Captura sensores    │
-          │ - Visualiza dados │   │ - Exibe a linha VR    │
-          │ - Registra no DB  │   │ - Reporta ângulos     │
-          └───────────────────┘   └───────────────────────┘
-```
+- **Painel de Transferidores**: Dois instrumentos com eixos rotativos mapeados para os dados de head tracking/linha. As variáveis visuais mantêm a convenção onde $180^\circ$ (interno) se apresenta como $0^\circ$ (neutro visual), esquerda vira negativo, direita positivo. Tudo dimensionado fluidamente no container CSS (`height: 55%` e `height: 60%`).
+- **Tabela de Acompanhamento (Grid do Exame)**: Tabela contendo 7 linhas (as 7 condições: Neutra, Estáticas, Dinâmicas e Hápticas) com células para as 4 medições subsequentes de cada uma e colunas de médias (`MD` e `MND`).
+- **Feedback Visual por CSS**: As linhas e células da tabela brilham através de classes CSS que invocam aninmações de `@keyframes` (`condition-pulse` e `measurement-pulse`) de acordo com o estado do fluxo.
 
-### 2.1 Canais Supabase Realtime em Uso
+## 3. Gestor de Estado (`useVVSExam.ts`)
 
-Todos os canais são **Broadcast** (sem persistência no DB) e são **específicos por usuário (UID)**:
+O composable de VVS organiza todo o ciclo de vida do exame local no cliente:
 
-| Canal                  | Direção          | Evento              | Payload                                                                               |
-| ---------------------- | ---------------- | ------------------- | ------------------------------------------------------------------------------------- |
-| `{uid}-tela`           | Desktop → Mobile | `tela`              | `{ tela: 'boasvindas' \| 'foco' \| 'examenormal' \| 'sobreposicao' \| 'aguardando' }` |
-| `{uid}-mensagem`       | Desktop → Mobile | `mensagem`          | texto livre / controle                                                                |
-| `{uid}-mensagem`       | Mobile → Desktop | `heartbeat`         | sinal de conexão ativa                                                                |
-| `{uid}-mensagem`       | Mobile → Desktop | `cancelar`          | paciente cancelou / desconectou                                                       |
-| `{uid}-angulo`         | Desktop → Mobile | `angulo`            | `{ anguloinicial: number }` (calibração)                                              |
-| `{canalId}` (dinâmico) | Mobile → Desktop | `angulodispositivo` | `{ valor: number }` (pitch em graus)                                                  |
+- Gerencia os ref globais como: `controleTela`, `pareamentoStatus`, `condicaoAtiva`, `medicaoAtiva`.
+- Subscrição em canais Supabase (`channel.on('broadcast', ...)`) limitando-se a pacotes rápidos.
+- Centraliza lógica de Cleanup (`onUnmounted` / Desconectar) para prevenção assídua de vazamento de memória e listeners fantasmas.
 
-### 2.2 Tabela de Controle de Pareamento
+## 4. Utilitários Puros (`utils/vvsExame.ts`)
 
-```sql
--- Tabela: ControlePareamento
--- Quando o celular faz login e acessa a tela "parear",
--- ele escreve o UID do usuário logado nessa tabela.
--- O desktop escuta por postgres_changes nessa tabela
--- para detectar que o celular está pronto.
+Para desvincular regras matemáticas pesadas do rendering Vue, criamos o helper assíncrono que rege as gerações aleatórias essenciais de um exame:
 
-pareado_dispositivo: uuid  -- UID do usuário que pareou
-```
+- **`sortearOrdemDirecao()`**: Seleciona uma das 6 sequências predefinidas validadas de direita ("d") e esquerda ("e").
+- **`gerarMedidasCondicao()`**: Com o vetor e os limiares extraídos do banco de dados (por ex: `amaxesq`, `amindir`), gera 4 ângulos aleatórios, **tendo como regra forte e vitalícia** a restrição lógica de uma distância mínima de 10º entre si se os ângulos forem de lados correspondentes, implementando até fallback otimizado para não gerar laços infinitos.
 
----
+## 5. BFF e Banco de Dados (`Nitro` + `Supabase`)
 
-## 3. Fluxo do Exame — Passo a Passo
+Foram criadas três integrações sólidas do padrão Thick Database com endpoints Nuxt:
 
-### 3.1 Pré-exame (Pareamento)
+- **`POST /api/vvs/status-exame`**: Muta os status via a RPC correspondente.
+- **`GET /api/vvs/check-pareamento`**: Rotina determinística que consulta dados robustos de pareamento via RPC.
+- **`GET /api/vvs/condicoes-exame`**: Retorna os parâmetros base das 7 condições de exame requeridas, lendo diretamente do backend, já preparados e organizados pelo RPC recém codificado em migration `20260224100000_vvs_get_condicoes_exame.sql`.
 
-```
-DESKTOP                              MOBILE (FlutterFlow)
-   │                                      │
-   │  [1] Clica "Novo Exame"              │
-   │  → Abre modal do exame               │
-   │  → Subscreve em ControlePareamento   │
-   │    (postgres_changes) aguardando     │
-   │    celular parear                    │
-   │                                      │
-   │                      [2] Login no app│
-   │                      → Acessa /parear│
-   │        ← ← ← ← ← ← ← ← ← ← ← ← ← │
-   │  [3] DB muda → Desktop detecta!      │
-   │  → Abre canais Broadcast             │
-   │  → Tela: "boasvindas"                │
-   │  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─► │
-   │                     Mobile muda tela │
-```
+## 6. Evolução Recente e Finalização (Ajustes de Março/2026)
 
-### 3.2 Calibração
+Nas sessões mais recentes, o fluxo foi levado da calibração visual até a persistência real de dados no banco, com refinamentos críticos de UX:
 
-```
-DESKTOP                              MOBILE
-   │                                      │
-   │  [1] Envia tela: "sobreposicao"      │
-   │  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─► │
-   │        Mobile exibe dois círculos    │
-   │        (azul e vermelho) p/ ajuste   │
-   │                                      │
-   │  [2] Avaliador ajusta calibração     │
-   │  → Envia "anguloinicial" (zero ref.) │
-   │  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─► │
-   │        Mobile salva ângulo base      │
-```
+### 6.1 Controles Físicos e Precisão (Teclado 3 Botões)
 
-### 3.3 Execução do Exame
+Implementamos uma lógica de mapeamento para teclados industriais de apenas três teclas (A, B, C), comumente usados em setups de VR:
 
-```
-DESKTOP                              MOBILE
-   │                                      │
-   │  [1] Envia tela: "foco"              │
-   │  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─► │
-   │        Mobile exibe ponto de foco    │
-   │                                      │
-   │  [2] Envia tela: "examenormal"       │
-   │  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─► │
-   │        Mobile exibe linha VR         │
-   │        (split screen 50/50 para VR)  │
-   │        linha rotaciona com pitch     │
-   │                                      │
-   │  ◄ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
-   │    [3] Mobile stream: angulodispositivo
-   │        { valor: -2.3 } (graus)       │
-   │  → Desktop exibe em tempo real       │
-   │                                      │
-   │  [4] Avaliador registra leitura      │
-   │  → Salva no banco (definitivo)       │
-```
+- **Tecla A / Seta Direita**: Incrementa o ângulo da linha.
+- **Tecla C / Seta Esquerda**: Decrementa o ângulo da linha.
+- **Tecla B / Space**: Alterna a velocidade do passo entre **0.1°** (precisão cirúrgica) e **1.0°** (ajuste rápido).
+- **Tratamento de Arredondamento**: O sistema utiliza `.toFixed(1)` e `parseFloat` em todas as mutações para evitar erros de ponto flutuante do Javascript, garantindo que o banco de dados receba valores decimais exatos.
+
+### 6.2 Persistência de Dados (RPC `nxt_create_oto_exame_paciente`)
+
+Foi desenvolvida uma estrutura de salvamento atômico para garantir a integridade do prontuário:
+
+- **Migration SQL**: Uma nova RPC que recebe um `JSONB` contendo todas as 7 condições e suas 4 medições. Ela insere o registro mestre na tabela `oto_exames` e faz o unnest dos dados para a tabela `oto_condicoes_exame_paciente` em uma única transação.
+- **BFF (`/api/vvs/exame.post.ts`)**: Camada de backend que valida os IDs de clínica e paciente, consome o `user_expandido_id` da store do Pinia e dispara o salvamento, retornando o ID do novo exame.
+
+### 6.3 Interface Pós-Exame e Relatório
+
+A experiência de fechamento do exame foi redesenhada para ser intuitiva:
+
+- **Estado `isExameCompleto`**: Uma propriedade computada que monitora o grid de resultados. Quando todas as 28 medições (7x4) são preenchidas, a interface entra em modo de finalização.
+- **UI de Conclusão**: O painel de instrumentos (transferidores) é ocultado para dar lugar a uma visão limpa da tabela de resultados e um banner de sucesso.
+- **Integração com Relatório**: Ao salvar, o usuário é levado a uma tela de "Exame Salvo" com a opção de abrir imediatamente o `ModalExamReport.vue`. O componente pai (`index.vue`) coordena a troca de modais e o refresh automático do cache de exames do paciente.
+
+### 6.4 Refinamentos de Layout
+
+- **Alinhamento do Pivot**: Ajustamos as coordenadas CSS (`bottom-[17%]`) da agulha do transferidor para que o ponto giratório case perfeitamente com o desenho técnico da imagem de fundo.
+- **Z-Index e Visibilidade**: O grid de condições agora expande automaticamente para exibir todas as linhas concluídas ao final do processo, facilitando a revisão antes do clique em "Salvar".
 
 ---
 
-## 4. Estado do Desenvolvimento
-
-### 4.1 O que já existe no Nuxt
-
-| Arquivo                             | Status        | Descrição                                               |
-| ----------------------------------- | ------------- | ------------------------------------------------------- |
-| `pages/exames/otolithics/index.vue` | ✅ Funcional  | Lista de pacientes, histórico de exames                 |
-| `components/ModalExamReport.vue`    | ✅ Funcional  | Visualização de relatório de exame existente            |
-| `components/ModalPaciente.vue`      | ✅ Funcional  | Criação/edição de paciente                              |
-| `composables/useRealtime.ts`        | ⚠️ Genérico   | Composable de teste, precisa ser especializado para VVS |
-| `pages/teste-realtime.vue`          | ✅ Referência | Página de teste de canais (uso em dev)                  |
-
-### 4.2 O que falta construir
-
-- [ ] **`composables/useVVSExam.ts`** — Composable especializado com toda a lógica do exame VVS
-  - Gerenciar múltiplos canais (tela, mensagem, angulo, angulodispositivo)
-  - Subscrição em `ControlePareamento` (postgres_changes)
-  - Máquina de estados do exame
-- [ ] **`components/ModalNovoExame.vue`** — Modal que abre ao clicar "Novo Exame"
-  - Tela de aguardando pareamento
-  - Painel de controle (envio de comandos de tela)
-  - Visualização do ângulo em tempo real
-  - Botão de registrar leitura
-- [ ] Conectar `performExam(patient.id)` em `otolithics/index.vue` ao novo modal
-
-### 4.3 App Mobile (FlutterFlow) — Référência
-
-O app mobile está **operacional** e é a referência. Para testar sem celular físico:
-
-- Use o **Simulador HTML**: `documentacao/mobile/simulator.html`
-- Execute Flutter Web: `cd mobile && flutter run -d chrome`
-
----
-
-## 5. Telas do Mobile (TelaAtual)
-
-O desktop controla a tela exibida no mobile enviando o nome da tela via broadcast:
-
-| Valor `tela`   | O que o mobile exibe                                           |
-| -------------- | -------------------------------------------------------------- |
-| `boasvindas`   | Tela de boas-vindas / aguardando início                        |
-| `aguardando`   | Tela de espera genérica                                        |
-| `sobreposicao` | Dois círculos (azul e vermelho) para ajuste de sobreposição VR |
-| `foco`         | Imagem estática de ponto de foco                               |
-| `examenormal`  | Split screen 50/50 com linha rotacionada (o exame em si)       |
-
----
-
-## 6. Cálculo da Linha (Mobile)
-
-```dart
-// No mobile, a rotação da linha é calculada assim:
-// (simplificado da função calcularCompensacaoLinha do FlutterFlow)
-
-rotacao = anguloinicial - angulosensor
-
-// anguloinicial: recebido do desktop via canal {uid}-angulo
-// angulosensor: leitura instantânea do absoluteOrientation.pitch
-//               via pacote dchs_motion_sensors
-```
-
-O threshold de envio é **0.1 graus** — abaixo disso, não envia para economizar banda.
-
----
-
-## 7. Notas para o Desenvolvedor
-
-- **Nunca** usar `useRealtime.ts` genérico para o VVS — criar composable dedicado
-- Os canais **devem ser desinscritos** quando o modal fecha (cleanup)
-- O `angulodispositivo` pode vir em alta frequência — usar `throttle` no desktop se necessário
-- O `ControlePareamento` é uma tabela real no Supabase — verificar migrations
-- O exame salvo no banco é definitivo; o broadcast é apenas efêmero/tempo real
+_Documento atualizado em 11 de Março de 2026._

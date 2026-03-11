@@ -208,6 +208,25 @@ const newPatient = () => {
 const onModalSave = () => {
     fetchPatients(pagination.value.page);
 };
+
+const handleExameSaved = async (examId: string) => {
+    if (selectedPatientExame.value?.id) {
+        const pId = selectedPatientExame.value.id;
+        try {
+            const data = await $fetch('/api/pacientes/otolithics/exames', {
+                params: { patient_id: pId }
+            });
+            examsCache.value[pId] = (data as Exam[]) || [];
+        } catch (e) {
+            console.error('Erro ao recarregar cache de exames do paciente após salvar novo exame:', e);
+        }
+    }
+};
+
+const handleViewReport = (examId: string) => {
+    // closeModal is handled inside ModalNovoExame. Emitting view-report just needs to open the report here.
+    viewExam(examId);
+};
 </script>
 
 <template>
@@ -412,6 +431,8 @@ const onModalSave = () => {
             :is-open="isNovoExameOpen"
             :patient="selectedPatientExame"
             @close="isNovoExameOpen = false"
+            @saved="handleExameSaved"
+            @view-report="handleViewReport"
         />
     </div>
 </template>

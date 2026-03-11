@@ -58,7 +58,7 @@ const ORDENS_DIRECAO: DirecaoItem[][] = [
  */
 export function sortearOrdemDirecao(): DirecaoItem[] {
     const indice = Math.floor(Math.random() * ORDENS_DIRECAO.length);
-    return ORDENS_DIRECAO[indice];
+    return ORDENS_DIRECAO[indice]!;
 }
 
 // ─── Gerador de Ângulos ──────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ function sorteiaAngulo(min: number, max: number, jaSorteados: number[]): number 
         return melhor;
     }
 
-    return possiveis[Math.floor(Math.random() * possiveis.length)];
+    return possiveis[Math.floor(Math.random() * possiveis.length)]!;
 }
 
 /**
