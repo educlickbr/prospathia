@@ -25,6 +25,31 @@ export const useVVSExam = () => {
     const supabase = useSupabaseClient();
     const currentUser = useSupabaseUser();
 
+    const ensureTelaChannel = async (uid: string) => {
+        const telaChannelName = `${uid}-tela`;
+        let telaChannel = channels.value[telaChannelName];
+
+        if (telaChannel) {
+            return telaChannel;
+        }
+
+        telaChannel = supabase.channel(telaChannelName);
+        telaChannel
+            .on('broadcast', { event: '*' }, (payload) => {
+                logMessage('Broadcast Echo (Tela)', payload);
+            })
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    isConnectedToChannels.value = true;
+                } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                    isConnectedToChannels.value = false;
+                }
+            });
+
+        channels.value[telaChannelName] = telaChannel;
+        return telaChannel;
+    };
+
     const logMessage = (source: string, message: any) => {
         const msg = {
             source,
@@ -60,8 +85,6 @@ export const useVVSExam = () => {
         // Puxa as métricas de calibração do exame do banco em background
         fetchCondicoes();
 
-        const telaChannelName = `${uid}-tela`;
-
         // --- 1. Polling Deterministico (BFF) ---
         // Aqui o Desktop checa de 2 em 2 segundos se o mobile disparou pareado_dispositivo = true
         // Cortamos o WebSocket problemático do Vue.
@@ -89,22 +112,7 @@ export const useVVSExam = () => {
 
         // --- 2. Subscrição de Broadcast (Canal de Tela e Mensagens) ---
         // Aqui o Desktop vai enviar os comandos para o mobile
-        const telaChannel = supabase.channel(telaChannelName);
-        
-        // Transform the callback-based subscription into an awaitable Promise
-        telaChannel
-            .on('broadcast', { event: '*' }, (payload) => {
-                logMessage('Broadcast Echo (Tela)', payload);
-            })
-            .subscribe((status) => {
-                 if (status === 'SUBSCRIBED') {
-                     isConnectedToChannels.value = true;
-                 } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                     isConnectedToChannels.value = false;
-                 }
-            });
-
-        channels.value[telaChannelName] = telaChannel;
+        await ensureTelaChannel(uid);
 
         // --- 3. Atualização de controle_pareamento ---
         // Dizemos ao banco que o desktop está pronto através da API (BFF)
@@ -135,8 +143,7 @@ export const useVVSExam = () => {
         
         if (!uid) return;
         
-        const channelName = `${uid}-tela`;
-        const channel = channels.value[channelName];
+        const channel = await ensureTelaChannel(uid);
         
         console.log('[VVS_DEBUG] enviarTela called with', tela, 'channel exists?', !!channel, 'isConnected?', isConnectedToChannels.value);
         if (channel) {
@@ -394,6 +401,9 @@ export const useVVSExam = () => {
         // Limpa estado isolado da store
         channels.value = {};
         isConnectedToChannels.value = false;
+        activeUid.value = null;
+        lastAngleData.value = { line: 180, head: 180 };
+        controleRemotoCancelar.value = 0;
         if (pollingInterval) {
             clearInterval(pollingInterval);
             pollingInterval = null;

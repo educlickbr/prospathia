@@ -84,6 +84,10 @@ const condicoesOrdenadas = computed(() => {
     });
 });
 
+const CABECA_IMAGEM_EXATA = 'https://otolithics-p.b-cdn.net/cabeca_posicao_exata.png';
+const CABECA_IMAGEM_JANELA = 'https://otolithics-p.b-cdn.net/cabeca_posicao.png';
+const CABECA_IMAGEM_FORA = 'https://otolithics-p.b-cdn.net/posicao_cabeca_false.png';
+
 // Controle de qual condição e medição estão ativas no momento
 const condicaoAtiva = ref<number | null>(null);  // índice na lista condicoesExame
 const medicaoAtiva = ref<number | null>(null);   // 0-3 dentro da condição
@@ -92,6 +96,19 @@ const stepSize = ref(0.1); // Passo padrão de 0.1 graus
 
 const isSaving = ref(false);
 
+const resetEstadoLocalExame = () => {
+    exameSalvoId.value = null;
+    resultadosExame.value = {};
+    medidasAtuais.value = [];
+    condicaoAtiva.value = null;
+    medicaoAtiva.value = null;
+    isMedindo.value = false;
+    isSaving.value = false;
+    stepSize.value = 0.1;
+    line_rotation.value = 180;
+    head_rotation.value = 180;
+};
+
 const isExameCompleto = computed(() => {
     if (!condicoesExame.value || condicoesExame.value.length === 0) return false;
     return condicoesExame.value.every(c => {
@@ -99,6 +116,38 @@ const isExameCompleto = computed(() => {
         return meds && meds.filter(m => m !== null).length === 4;
     });
 });
+
+const condicaoAtualParaCabeca = computed(() => {
+    if (!condicoesOrdenadas.value.length) return null;
+    if (condicaoAtiva.value === null) return condicoesOrdenadas.value[0];
+    return condicoesOrdenadas.value[condicaoAtiva.value] || null;
+});
+
+const imagemCabecaAtual = computed(() => {
+    const condicao = condicaoAtualParaCabeca.value;
+    if (!condicao) return CABECA_IMAGEM_JANELA;
+
+    const ideal = Number(condicao.aidealcab);
+    const minimo = Number(condicao.amincab);
+    const maximo = Number(condicao.amaxcab);
+    const anguloAtual = Number(head_rotation.value);
+
+    if ([ideal, minimo, maximo, anguloAtual].some(v => Number.isNaN(v))) {
+        return CABECA_IMAGEM_JANELA;
+    }
+
+    if (Math.abs(anguloAtual - ideal) <= 0.1) {
+        return CABECA_IMAGEM_EXATA;
+    }
+
+    if (anguloAtual >= minimo && anguloAtual <= maximo) {
+        return CABECA_IMAGEM_JANELA;
+    }
+
+    return CABECA_IMAGEM_FORA;
+});
+
+const podeRegistrarMedida = computed(() => imagemCabecaAtual.value !== CABECA_IMAGEM_FORA);
 
 // Ouve disparos de cancelamento do Óculos/Mobile via WebSockets
 watch(controleRemotoCancelar, (novoValor) => {
@@ -158,8 +207,13 @@ onUnmounted(() => {
 
 const closeModal = async () => {
     console.log('[VVS_DEBUG] Botão de fechar pressionado. Limpando canais ativamente antes de desmontar.');
+
+    // Segurança extra: se cancelar no meio da medição, encerra tracking imediatamente.
+    await pararTrackingVR();
     await cleanup();
-    resultadosExame.value = {}; // Resetar memórias locais para o próximo paciente
+
+    // Resetar memórias locais para o próximo paciente
+    resetEstadoLocalExame();
     emit('close');
 };
 
@@ -203,6 +257,21 @@ const handleMainAction = async () => {
     }
 };
 
+const obterTelaExamePorCondicao = (nomeCondicao: string) => {
+    const nomeLower = nomeCondicao.toLowerCase();
+    let telaNome = 'examenormal';
+
+    if (nomeLower.includes('dinâmica') || nomeLower.includes('dinamica')) {
+        if (nomeLower.includes('anti')) {
+            telaNome = 'examedinamicaamtihorario';
+        } else {
+            telaNome = 'examedinamicahorario';
+        }
+    }
+
+    return telaNome;
+};
+
 const iniciarCondicaoAction = () => {
     // Se for o painel muito inicial (ainda sem exibir nenhuma condição formalmente ativa)
     if (condicaoAtiva.value === null) {
@@ -212,6 +281,10 @@ const iniciarCondicaoAction = () => {
     const condicao = condicoesOrdenadas.value[condicaoAtiva.value];
     
     if (condicao) {
+        // Ao iniciar uma nova condição, garante que o VR volte para a tela de exame.
+        const telaNome = obterTelaExamePorCondicao(condicao.nome);
+        enviarTela(undefined, telaNome);
+
         // 1. Sorteia uma das ordens (ex: Direita, Direita, Esquerda, Esquerda)
         const ordem = sortearOrdemDirecao();
         
@@ -238,15 +311,7 @@ const iniciarMedicaoVRAction = () => {
     if (!condicao) return;
     
     // 1. Determina qual tela o VR deve carregar
-    const nomeLower = condicao.nome.toLowerCase();
-    let telaNome = 'examenormal';
-    if (nomeLower.includes('dinâmica') || nomeLower.includes('dinamica')) {
-        if (nomeLower.includes('anti')) {
-            telaNome = 'examedinamicaamtihorario';
-        } else {
-            telaNome = 'examedinamicahorario';
-        }
-    }
+    const telaNome = obterTelaExamePorCondicao(condicao.nome);
     
     // 2. Envia visual / comando de tela
     enviarTela(undefined, telaNome);
@@ -262,12 +327,16 @@ const iniciarMedicaoVRAction = () => {
 
 const capturarMedida = async () => {
     if (condicaoAtiva.value === null || medicaoAtiva.value === null || !isMedindo.value) return;
+    if (!podeRegistrarMedida.value) {
+        logMessage('Exam Flow', { text: 'Ajuste a posição da cabeça antes de registrar a medida.' });
+        return;
+    }
     
     const condicao = condicoesOrdenadas.value[condicaoAtiva.value];
     if (!condicao) return;
     
     // Captura o valor atual (corrigindo para a escala de 0 central)
-    const valorCapturado = line_rotation.value - 180;
+    const valorCapturado = parseFloat((line_rotation.value - 180).toFixed(1));
     
     if (!resultadosExame.value[condicao.id]) {
         resultadosExame.value[condicao.id] = [null, null, null, null];
@@ -289,6 +358,10 @@ const capturarMedida = async () => {
     } else {
         // Fim das 4 medições desta condição -> Avança para próxima condição e esvazia o estado
         if (condicaoAtiva.value < condicoesOrdenadas.value.length - 1) {
+            // Ao finalizar uma condição, envia a tela de aguardando para o VR.
+            controleTela.value = 'aguardando';
+            enviarTela(undefined, 'aguardando');
+
             condicaoAtiva.value++;
             medicaoAtiva.value = null; // Trava aqui em Null para forçar o botão "Iniciar Condição" aparecer novamente
             medidasAtuais.value = []; // Limpa sujeira anterior
@@ -305,11 +378,7 @@ const capturarMedida = async () => {
 
 const reiniciarExame = () => {
     if (!confirm('Deseja descartar todos os resultados e reiniciar o exame a partir do zero?')) return;
-    resultadosExame.value = {};
-    medicaoAtiva.value = null;
-    condicaoAtiva.value = null;
-    medidasAtuais.value = [];
-    isMedindo.value = false;
+    resetEstadoLocalExame();
 };
 
 // Cálculo de MD (Média dos Desvios)
@@ -332,6 +401,11 @@ const calcularMND = (condId: string) => {
     if (validas.length === 0) return '—';
     const somaAbsoluta = validas.reduce((a, b) => a + Math.abs(b), 0);
     return (somaAbsoluta / validas.length).toFixed(1);
+};
+
+const formatarMedidaTabela = (valor: number | null | undefined) => {
+    if (valor === null || valor === undefined) return '—';
+    return valor.toFixed(1);
 };
 
 const salvarExame = async () => {
@@ -436,10 +510,12 @@ const salvarExame = async () => {
                 <button 
                    v-if="controleTela === 'aguardando' && medicaoAtiva !== null && isMedindo && !isExameCompleto"
                    @click="capturarMedida" 
-                   class="px-5 py-2 min-w-40 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
+                         :disabled="!podeRegistrarMedida"
+                         class="px-5 py-2 min-w-40 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 shadow-lg disabled:cursor-not-allowed disabled:bg-secondary/30 disabled:text-secondary/60 disabled:shadow-none"
+                         :class="podeRegistrarMedida ? 'bg-primary hover:bg-primary-dark text-white shadow-primary/20' : 'bg-secondary/30 text-secondary/60'"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                  Registrar Medida {{ medicaoAtiva + 1 }}
+                        {{ podeRegistrarMedida ? `Registrar Medida ${medicaoAtiva + 1}` : 'Corrigir Cabeça' }}
                </button>
 
                <!-- Botão Reiniciar Exame (aparece quando o exame termina caso o usuário queira recomeçar do zero) -->
@@ -608,7 +684,7 @@ const salvarExame = async () => {
                             :style="{ transform: `translateX(-50%) rotate(${head_rotation - 180}deg)`, transformOrigin: 'bottom center', height: '60%' }"
                         >
                             <img
-                                src="https://otolithics-p.b-cdn.net/cabeca_posicao.png"
+                                :src="imagemCabecaAtual"
                                 alt="Posição da Cabeça"
                                 class="h-full w-auto select-none pointer-events-none"
                             />
@@ -670,7 +746,7 @@ const salvarExame = async () => {
                                         {{ ['ANGD', 'ANGD', 'ANGD', 'ANGD', 'ANGD', 'HTPG', 'HTPG'][idx] }}
                                     </span>
                                     <span class="flex-1 text-center text-xs font-bold tabular-nums" :class="condicaoAtiva === idx && medicaoAtiva === (m - 1) ? 'text-primary' : 'text-secondary/50'">
-                                        {{ resultadosExame[cond.id]?.[m-1] ?? '&mdash;' }}
+                                        {{ formatarMedidaTabela(resultadosExame[cond.id]?.[m-1]) }}
                                     </span>
                                     <span class="text-[10px] text-secondary/40">°</span>
                                 </div>
