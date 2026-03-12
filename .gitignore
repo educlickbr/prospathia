@@ -18,6 +18,7 @@ front_end/*.log
 .fleet
 .idea
 .vscode/
+_referencia/
 
 # Local env files
 front_end/.env
