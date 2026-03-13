@@ -93,6 +93,8 @@ const condicaoAtiva = ref<number | null>(null);  // índice na lista condicoesEx
 const medicaoAtiva = ref<number | null>(null);   // 0-3 dentro da condição
 const isMedindo = ref(false); // VR Tracking Ativo
 const stepSize = ref(0.1); // Passo padrão de 0.1 graus
+const DOUBLE_B_INTERVAL_MS = 280;
+const bSingleTapTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 
 const isSaving = ref(false);
 
@@ -149,6 +151,24 @@ const imagemCabecaAtual = computed(() => {
 
 const podeRegistrarMedida = computed(() => imagemCabecaAtual.value !== CABECA_IMAGEM_FORA);
 
+const limparTimerCliqueB = () => {
+    if (bSingleTapTimer.value) {
+        clearTimeout(bSingleTapTimer.value);
+        bSingleTapTimer.value = null;
+    }
+};
+
+const executarAcaoDuploCliqueB = () => {
+    if (controleTela.value !== 'aguardando' || medicaoAtiva.value === null || isExameCompleto.value) return;
+
+    if (!isMedindo.value) {
+        iniciarMedicaoVRAction();
+        return;
+    }
+
+    void capturarMedida();
+};
+
 // Ouve disparos de cancelamento do Óculos/Mobile via WebSockets
 watch(controleRemotoCancelar, (novoValor) => {
     if (novoValor > 0 && props.isOpen) {
@@ -168,26 +188,47 @@ watch(lastAngleData, (data) => {
 
 // Controle da linha via Teclado com suporte ao Mini Teclado 3 Botões (A, B, C)
 const handleKeyDown = (e: KeyboardEvent) => {
-    if (!props.isOpen || controleTela.value !== 'aguardando' || !isMedindo.value) return;
+    if (!props.isOpen || controleTela.value !== 'aguardando') return;
 
     const key = e.key.toLowerCase();
-    
-    // Botão Central do mini teclado (ou Barra de Espaço) -> Alternar velocidade do passo
-    if (key === 'b' || e.code === 'Space') {
+
+    // Tecla B (ou Space) com duplo clique contextual:
+    // - Entre medidas (botão azul): inicia medição
+    // - Durante medição: registra medida
+    const isTeclaB = key === 'b' || e.code === 'Space';
+    if (isTeclaB) {
+        // Evita auto-repeat do SO na tecla B/Space para não bagunçar o detector de duplo clique.
+        if (e.repeat) return;
         e.preventDefault();
-        stepSize.value = stepSize.value === 0.1 ? 1 : 0.1;
-        return; // Não envia ajuste de rotação
+
+        if (bSingleTapTimer.value) {
+            limparTimerCliqueB();
+            executarAcaoDuploCliqueB();
+            return;
+        }
+
+        bSingleTapTimer.value = setTimeout(() => {
+            bSingleTapTimer.value = null;
+
+            // Clique simples mantém toggle de passo apenas durante medição ativa
+            if (!isMedindo.value) return;
+            stepSize.value = stepSize.value === 0.1 ? 1 : 0.1;
+        }, DOUBLE_B_INTERVAL_MS);
+
+        return;
     }
+    
+    if (!isMedindo.value) return;
     
     // Botão Direito / Esquerdo
     if (key === 'c' || key === 'a' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault();
         
-        // A / Seta Direita -> Incrementa
+        // C / Seta Direita -> Incrementa
         if (key === 'c' || e.key === 'ArrowRight') {
             line_rotation.value = parseFloat((line_rotation.value + stepSize.value).toFixed(1));
         } 
-        // C / Seta Esquerda -> Decrementa
+        // A / Seta Esquerda -> Decrementa
         else if (key === 'a' || e.key === 'ArrowLeft') {
             line_rotation.value = parseFloat((line_rotation.value - stepSize.value).toFixed(1));
         }
@@ -202,11 +243,14 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+    limparTimerCliqueB();
     window.removeEventListener('keydown', handleKeyDown);
 });
 
 const closeModal = async () => {
     console.log('[VVS_DEBUG] Botão de fechar pressionado. Limpando canais ativamente antes de desmontar.');
+
+    limparTimerCliqueB();
 
     // Segurança extra: se cancelar no meio da medição, encerra tracking imediatamente.
     await pararTrackingVR();
